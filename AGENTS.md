@@ -91,8 +91,12 @@ and let the user approve the pair together. Don't discover this mid-apply.
     editor-handoff/
     status-docs/
   .claude/                       Claude Code adapter only
+    README.md                    how the Claude wiring fits together
     settings.json                permissions and plan-mode default
     skills/                      pointer stubs into skills/
+  agents/                        wiring for tools that need more than AGENTS.md
+    README.md                    the shared-vs-per-agent rule and the registry
+    _template/                   copy to agents/<id>/ for a new tool
   PROJECT_PATH.txt               local config: the user's Unity project path
   PROJECT_PATH.example.txt       template for that file
   scripts/                       portable checks (PowerShell + POSIX sh)
@@ -330,3 +334,8 @@ OS — so this explicit check is the portable path for all of them.
 `CLAUDE.md` and `GEMINI.md` exist only so those tools find the contract under
 their expected filename; both point here. Everything else in the harness —
 skills, templates, scripts, project memory — is tool-neutral.
+
+**Wiring a new tool.** Shared pieces are never copied. A tool that needs a fixed
+root filename gets a one-line shim; tool-owned configuration goes in that tool's
+directory; anything else goes under `agents/<id>/`. Follow `agents/README.md`
+before adding one.

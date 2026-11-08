@@ -70,6 +70,9 @@ No agent gets automatic hooks: `.claude/settings.json` stays hook-free so the
 same file works on every OS, and every agent — Claude included — is told to run
 `check-repo` before it ends a turn.
 
+If your tool needs more than `AGENTS.md` — a fixed filename or its own config —
+`agents/README.md` describes the pattern and includes a template.
+
 The agent reads `PROJECT_PATH.txt` as its first action, so it already knows where
 the project is. Nothing to paste into the chat. The repo-purity checks read the
 same file, so they're protecting the right directory from the first turn.
@@ -144,8 +147,12 @@ README.md              you are here
 skills/                six skills: audit, architecture, workflow, verification,
                        handoff, docs
 .claude/
+  README.md            how the Claude wiring fits together
   settings.json        Claude Code adapter: permissions and plan-mode default
   skills/              pointer stubs into skills/
+agents/
+  README.md            how to wire a tool; shared-vs-per-agent rule
+  _template/           copy to agents/<id>/ for a new tool
 scripts/
   harness.ps1          the checks, Windows PowerShell
   harness.sh           the checks, macOS/Linux sh
