@@ -1,12 +1,16 @@
-# Launch the Unity engineering harness against a project repo with any agent CLI.
+# Launch the Unity engineering harness against one or more project repos.
 #   .\agent.ps1 C:\dev\UnityProject
+#   .\agent.ps1 C:\dev\UnityProject -AdditionalPaths C:\dev\LegacyGame
 #   .\agent.ps1 C:\dev\UnityProject -Agent codex
 #
-# Runs the agent from THIS directory so this harness's AGENTS.md and skills load,
-# with the project repo exported for the checks.
+# Runs the agent from THIS directory so this harness's AGENTS.md and skills load.
+# The first path is the working repo; additional paths are references for
+# porting or re-importing between projects.
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$ProjectPath,
+
+    [string[]]$AdditionalPaths = @(),
 
     # Agent command to launch: a name on PATH or a full path. Defaults to
     # $env:HARNESS_AGENT, then claude.
@@ -18,11 +22,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$resolved = (Resolve-Path -LiteralPath $ProjectPath).Path
+$paths = @((Resolve-Path -LiteralPath $ProjectPath).Path)
+foreach ($extra in $AdditionalPaths) {
+    $paths += (Resolve-Path -LiteralPath $extra).Path
+}
 
-if (-not (Test-Path (Join-Path $resolved 'Assets')) -or
-    -not (Test-Path (Join-Path $resolved 'ProjectSettings'))) {
-    Write-Warning "$resolved does not look like a Unity project root (expected Assets\ and ProjectSettings\)"
+foreach ($p in $paths) {
+    if (-not (Test-Path (Join-Path $p 'Assets')) -or
+        -not (Test-Path (Join-Path $p 'ProjectSettings'))) {
+        Write-Warning "$p does not look like a Unity project root (expected Assets\ and ProjectSettings\)"
+    }
 }
 
 $command = Get-Command $Agent -ErrorAction SilentlyContinue
@@ -32,19 +41,21 @@ if (-not $command -or $command.CommandType -ne 'Application') {
 
 Set-Location -LiteralPath $PSScriptRoot
 
-# Keep PROJECT_PATH.txt in sync so the guards and the agent see the same path.
-@(
-    "# Written by agent.ps1 on $(Get-Date). Edit freely."
-    $resolved
-) | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'PROJECT_PATH.txt')
+# Keep PROJECT_PATH.txt in sync: one path per line, first is the working repo.
+$lines = @("# Written by agent.ps1 on $(Get-Date). Edit freely. One path per line; the first is the working repo.")
+$lines += $paths
+$lines | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'PROJECT_PATH.txt')
 
-$env:UNITY_AGENT_PROJECT_PATH = $resolved
+$env:UNITY_AGENT_PROJECT_PATHS = ($paths -join ';')
+Remove-Item Env:UNITY_AGENT_PROJECT_PATH -ErrorAction SilentlyContinue
 
-# Only Claude Code needs the extra directory flag; other agents get repo access
-# from their own configuration.
+# Claude Code needs its extra directories passed explicitly; every other tool
+# gets repo access from its own configuration.
 $agentName = [IO.Path]::GetFileNameWithoutExtension($command.Name)
 $agentArgs = @()
-if ($agentName -eq 'claude') { $agentArgs += @('--add-dir', $resolved) }
+if ($agentName -eq 'claude') {
+    foreach ($p in $paths) { $agentArgs += @('--add-dir', $p) }
+}
 $agentArgs += $ExtraArgs
 
 & $command.Source @agentArgs

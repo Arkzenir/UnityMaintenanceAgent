@@ -23,6 +23,10 @@ for their own filename first.
    `~` are all handled, so paste whatever your file manager gives you. Windows
    "Copy as path" output works as-is.
 
+   Add more lines for a second repo — porting, re-importing, or comparing two
+   projects. The first line is the working repo; the rest are references, and
+   every check covers every line.
+
    Optional sanity check before you start:
 
    ```powershell
@@ -74,8 +78,8 @@ If your tool needs more than `AGENTS.md` — a fixed filename or its own config 
 `agents/README.md` describes the pattern and includes a template.
 
 The agent reads `PROJECT_PATH.txt` as its first action, so it already knows where
-the project is. Nothing to paste into the chat. The repo-purity checks read the
-same file, so they're protecting the right directory from the first turn.
+each project is. Nothing to paste into the chat. The repo-purity checks read the
+same file, so they're protecting the right directories from the first turn.
 
 If you ever want to work on a different project for one session without editing the
 file, just name the path in chat — that wins for that session, and the agent will
@@ -100,6 +104,10 @@ HARNESS_AGENT=codex ./agent.sh /path/to/MyUnityProject
 are passed through to it. Only Claude Code gets `--add-dir` automatically,
 because that is its flag for granting a second directory. For other tools, grant
 the repo access in that tool's own configuration.
+
+For a second repo, add it at launch:
+`.\agent.ps1 C:\target -AdditionalPaths C:\source` or
+`./agent.sh /target --also /source`.
 
 Without a launcher:
 
@@ -174,7 +182,7 @@ The rule lives in `AGENTS.md` Rule 1; two platform-native scripts back it:
 
 | Check | What it does |
 |---|---|
-| `check-path` | validates `PROJECT_PATH.txt`, prints the Unity version |
+| `check-path` | validates every configured path, prints each Unity version |
 | `check-write <path>` | tests one write target; exit 2 blocks it |
 | `check-repo` | scans the repo for stray artifacts; exit 2 lists them |
 
@@ -183,13 +191,14 @@ On Windows run them through `scripts/harness.ps1`; on macOS/Linux through
 before it finishes a turn, and `check-write` on anything it is about to create
 inside the repo.
 
-Both read the repo path from `PROJECT_PATH.txt` (or `UNITY_AGENT_PROJECT_PATH` if
-you used a launcher) and **fail open** when no path is configured — a missing or
-unfilled `PROJECT_PATH.txt` means no protection, which is the other reason to set
-it up first. Neither script deletes anything. If a pattern ever produces a false
-positive on one of your own filenames, edit the pattern lists near the top of
-`scripts/harness.ps1` and `scripts/harness.sh` — they are plain arrays of regexes,
-kept in step across the two files.
+Both read every path from `PROJECT_PATH.txt` (or the environment overrides) and
+apply to all of them, so a reference repo is guarded too. They **fail open** when
+no path is configured — a missing or unfilled `PROJECT_PATH.txt` means no
+protection, which is the other reason to set it up first. Neither script deletes
+anything. If a pattern ever produces a false positive on one of your own
+filenames, edit the pattern lists near the top of `scripts/harness.ps1` and
+`scripts/harness.sh` — they are plain arrays of regexes, kept in step across the
+two files.
 
 If the scan flags a file that is genuinely yours, the agent is told to say so and
 leave it alone.

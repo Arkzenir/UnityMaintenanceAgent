@@ -7,13 +7,17 @@
     Windows implementation. The macOS/Linux counterpart is scripts/harness.sh;
     keep the two in step. No Node or Python needed.
 
-        harness.ps1 check-path            validate the configured Unity project
-        harness.ps1 check-write <path>    test one write target
-        harness.ps1 check-repo            scan the project for stray artifacts
+        harness.ps1 check-path            validate every configured Unity project
+        harness.ps1 check-write <path>    test one write target against every project
+        harness.ps1 check-repo            scan every project for stray artifacts
 
-    check-write and check-repo exit 0 when clean and 2 on a violation, so they
-    can be used from a hook or a shell. They fail open when no project path is
-    configured.
+    PROJECT_PATH.txt holds one project path per line. The first is the working
+    repo; additional paths are reference/source repos for cross-project work
+    such as porting or re-importing. UNITY_AGENT_PROJECT_PATHS (semicolon-
+    separated) or UNITY_AGENT_PROJECT_PATH overrides the file.
+
+    check-write and check-repo exit 0 when clean and 2 on a violation. They fail
+    open when no project path is configured.
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)]
@@ -29,7 +33,7 @@ $ErrorActionPreference = 'Stop'
 $HarnessDir = Split-Path -Parent $PSScriptRoot
 $ConfigFile = Join-Path $HarnessDir 'PROJECT_PATH.txt'
 
-# Names that must never appear inside the game repo.
+# Names that must never appear inside a game repo.
 $BannedNamePatterns = @(
     '^claude\.md$',
     '^agents?\.md$',
@@ -68,7 +72,7 @@ $BannedPathPatterns = @(
     '[\\/][^\\/]*\.copy\.cs$'
 )
 
-# Path segments inside the repo that are never ours to write.
+# Path segments inside a repo that are never ours to write.
 $BannedDirPatterns = @(
     '(^|[\\/])(Library|Temp|obj|Logs|UserSettings|\.claude|\.cursor|\.codex|\.gemini|\.aider[^\\/]*)([\\/]|$)'
 )
@@ -102,27 +106,12 @@ $SkipDirs = @(
 
 $SuspectDirs = @('.claude', '.cursor', '.codex', '.gemini', '.aider')
 
-function Get-ConfiguredProjectPath {
-    $raw = $env:UNITY_AGENT_PROJECT_PATH
+function ConvertTo-ProjectPath {
+    param([string]$Raw)
 
-    if ([string]::IsNullOrWhiteSpace($raw)) {
-        if (-not (Test-Path -LiteralPath $ConfigFile)) { return $null }
-        try {
-            $lines = Get-Content -LiteralPath $ConfigFile -ErrorAction Stop
-        } catch {
-            return $null
-        }
-        foreach ($line in $lines) {
-            $text = $line.Trim()
-            if ($text.Length -eq 0 -or $text.StartsWith('#')) { continue }
-            $raw = $text
-            break
-        }
-    }
+    if ([string]::IsNullOrWhiteSpace($Raw)) { return $null }
 
-    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
-
-    $value = $raw.Trim()
+    $value = $Raw.Trim()
     if ($value.Length -ge 2) {
         if (($value.StartsWith('"') -and $value.EndsWith('"')) -or
             ($value.StartsWith("'") -and $value.EndsWith("'"))) {
@@ -144,6 +133,35 @@ function Get-ConfiguredProjectPath {
     if ($value -match '^[A-Za-z]:$') { $value = $value + '\' }
 
     try { return [IO.Path]::GetFullPath($value) } catch { return $null }
+}
+
+function Get-ConfiguredProjectPaths {
+    $entries = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($env:UNITY_AGENT_PROJECT_PATHS)) {
+        $entries = $env:UNITY_AGENT_PROJECT_PATHS -split ';'
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:UNITY_AGENT_PROJECT_PATH)) {
+        $entries = @($env:UNITY_AGENT_PROJECT_PATH)
+    } elseif (Test-Path -LiteralPath $ConfigFile) {
+        try {
+            $lines = Get-Content -LiteralPath $ConfigFile -ErrorAction Stop
+        } catch {
+            $lines = @()
+        }
+        foreach ($line in $lines) {
+            $text = $line.Trim()
+            if ($text.Length -eq 0 -or $text.StartsWith('#')) { continue }
+            $entries += $text
+        }
+    }
+
+    $paths = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in $entries) {
+        $path = ConvertTo-ProjectPath -Raw $entry
+        if ($path) { $paths.Add($path) }
+    }
+
+    return $paths.ToArray()
 }
 
 function Get-RelativeRepoPath {
@@ -178,87 +196,12 @@ function Write-Blocked {
     exit 2
 }
 
-function Invoke-CheckPath {
-    $repo = Get-ConfiguredProjectPath
-    if (-not $repo) {
-        [Console]::Error.WriteLine('ERROR: No project path configured.')
-        [Console]::Error.WriteLine('  Copy PROJECT_PATH.example.txt to PROJECT_PATH.txt and paste your Unity project path.')
-        exit 1
-    }
-
-    Write-Output "Configured path: $repo"
-
-    if (-not (Test-Path -LiteralPath $repo -PathType Container)) {
-        [Console]::Error.WriteLine('ERROR: That folder does not exist. Check for typos or a stray character.')
-        exit 1
-    }
-
-    $missing = @()
-    if (-not (Test-Path -LiteralPath (Join-Path $repo 'Assets') -PathType Container)) {
-        $missing += 'Assets'
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $repo 'ProjectSettings') -PathType Container)) {
-        $missing += 'ProjectSettings'
-    }
-    if ($missing.Count -gt 0) {
-        [Console]::Error.WriteLine(
-            "ERROR: Missing $($missing -join ' and ') - this is not a Unity project root."
-        )
-        [Console]::Error.WriteLine('  You may have pointed at the Assets folder or a parent folder.')
-        exit 1
-    }
-
-    $version = 'unknown'
-    $versionFile = Join-Path $repo 'ProjectSettings\ProjectVersion.txt'
-    if (Test-Path -LiteralPath $versionFile) {
-        $match = Select-String -LiteralPath $versionFile -Pattern 'm_EditorVersion:\s*(\S+)' |
-            Select-Object -First 1
-        if ($match) { $version = $match.Matches[0].Groups[1].Value }
-    }
-
-    Write-Output "OK: valid Unity project root (Unity $version)."
-    Write-Output '  Ready - start the agent.'
-}
-
-function Invoke-CheckWrite {
-    $repo = Get-ConfiguredProjectPath
-    if (-not $repo) { exit 0 }
-    if ([string]::IsNullOrWhiteSpace($Path)) { exit 0 }
-
-    try { $file = [IO.Path]::GetFullPath($Path) } catch { exit 0 }
-
-    $relative = Get-RelativeRepoPath -Repo $repo -File $file
-    if ($null -eq $relative) { exit 0 }
-
-    $base = [IO.Path]::GetFileName($file)
-
-    $hit = $false
-    foreach ($pattern in $BannedNamePatterns) {
-        if ($base -match $pattern) { $hit = $true; break }
-    }
-    if (-not $hit) {
-        foreach ($pattern in $BannedPathPatterns) {
-            if ($relative -match $pattern) { $hit = $true; break }
-        }
-    }
-    if (-not $hit) {
-        foreach ($pattern in $BannedDirPatterns) {
-            if ($relative -match $pattern) { $hit = $true; break }
-        }
-    }
-
-    if ($hit) { Write-Blocked -RelativePath $relative }
-    exit 0
-}
-
-function Invoke-CheckRepo {
-    $repo = Get-ConfiguredProjectPath
-    if (-not $repo) { exit 0 }
-    if (-not (Test-Path -LiteralPath $repo -PathType Container)) { exit 0 }
+function Get-RepoFindings {
+    param([string]$Repo)
 
     $found = New-Object System.Collections.Generic.List[string]
     $stack = New-Object System.Collections.Stack
-    $stack.Push($repo)
+    $stack.Push($Repo)
 
     while ($stack.Count -gt 0 -and $found.Count -lt 40) {
         $dir = $stack.Pop()
@@ -267,7 +210,7 @@ function Invoke-CheckRepo {
                 $leaf = [IO.Path]::GetFileName($sub)
                 if ($SkipDirs -contains $leaf) { continue }
                 if ($SuspectDirs -contains $leaf) {
-                    $found.Add((Get-RelativeRepoPath -Repo $repo -File $sub) + '/')
+                    $found.Add((Get-RelativeRepoPath -Repo $Repo -File $sub) + '/')
                     continue
                 }
                 $stack.Push($sub)
@@ -276,7 +219,7 @@ function Invoke-CheckRepo {
                 $leaf = [IO.Path]::GetFileName($item)
                 foreach ($pattern in $SuspectPatterns) {
                     if ($leaf -match $pattern) {
-                        $found.Add((Get-RelativeRepoPath -Repo $repo -File $item))
+                        $found.Add((Get-RelativeRepoPath -Repo $Repo -File $item))
                         break
                     }
                 }
@@ -287,13 +230,113 @@ function Invoke-CheckRepo {
         }
     }
 
-    if ($found.Count -eq 0) { exit 0 }
+    return $found.ToArray()
+}
 
-    $sorted = $found | Sort-Object
-    [Console]::Error.WriteLine("repo-hygiene found $($sorted.Count) stray artifact(s) in the game repo:")
-    foreach ($entry in $sorted) {
-        [Console]::Error.WriteLine("  - $entry")
+function Invoke-CheckPath {
+    $paths = @(Get-ConfiguredProjectPaths)
+    if ($paths.Count -eq 0) {
+        [Console]::Error.WriteLine('ERROR: No project path configured.')
+        [Console]::Error.WriteLine('  Copy PROJECT_PATH.example.txt to PROJECT_PATH.txt and paste your Unity project path.')
+        exit 1
     }
+
+    $failed = $false
+    foreach ($repo in $paths) {
+        Write-Output "Configured path: $repo"
+
+        if (-not (Test-Path -LiteralPath $repo -PathType Container)) {
+            [Console]::Error.WriteLine('ERROR: That folder does not exist. Check for typos or a stray character.')
+            $failed = $true
+            continue
+        }
+
+        $missing = @()
+        if (-not (Test-Path -LiteralPath (Join-Path $repo 'Assets') -PathType Container)) {
+            $missing += 'Assets'
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $repo 'ProjectSettings') -PathType Container)) {
+            $missing += 'ProjectSettings'
+        }
+        if ($missing.Count -gt 0) {
+            [Console]::Error.WriteLine(
+                "ERROR: Missing $($missing -join ' and ') - this is not a Unity project root."
+            )
+            [Console]::Error.WriteLine('  You may have pointed at the Assets folder or a parent folder.')
+            $failed = $true
+            continue
+        }
+
+        $version = 'unknown'
+        $versionFile = Join-Path $repo 'ProjectSettings\ProjectVersion.txt'
+        if (Test-Path -LiteralPath $versionFile) {
+            $match = Select-String -LiteralPath $versionFile -Pattern 'm_EditorVersion:\s*(\S+)' |
+                Select-Object -First 1
+            if ($match) { $version = $match.Matches[0].Groups[1].Value }
+        }
+
+        Write-Output "OK: valid Unity project root (Unity $version)."
+    }
+
+    if ($failed) { exit 1 }
+    Write-Output '  Ready - start the agent.'
+}
+
+function Invoke-CheckWrite {
+    $paths = @(Get-ConfiguredProjectPaths)
+    if ($paths.Count -eq 0) { exit 0 }
+    if ([string]::IsNullOrWhiteSpace($Path)) { exit 0 }
+
+    try { $file = [IO.Path]::GetFullPath($Path) } catch { exit 0 }
+
+    $base = [IO.Path]::GetFileName($file)
+
+    foreach ($repo in $paths) {
+        $relative = Get-RelativeRepoPath -Repo $repo -File $file
+        if ($null -eq $relative) { continue }
+
+        $hit = $false
+        foreach ($pattern in $BannedNamePatterns) {
+            if ($base -match $pattern) { $hit = $true; break }
+        }
+        if (-not $hit) {
+            foreach ($pattern in $BannedPathPatterns) {
+                if ($relative -match $pattern) { $hit = $true; break }
+            }
+        }
+        if (-not $hit) {
+            foreach ($pattern in $BannedDirPatterns) {
+                if ($relative -match $pattern) { $hit = $true; break }
+            }
+        }
+
+        if ($hit) { Write-Blocked -RelativePath $relative }
+    }
+
+    exit 0
+}
+
+function Invoke-CheckRepo {
+    $paths = @(Get-ConfiguredProjectPaths)
+    if ($paths.Count -eq 0) { exit 0 }
+
+    $any = $false
+    foreach ($repo in $paths) {
+        if (-not (Test-Path -LiteralPath $repo -PathType Container)) { continue }
+
+        $found = @(Get-RepoFindings -Repo $repo)
+        if ($found.Count -eq 0) { continue }
+
+        $any = $true
+        $sorted = $found | Sort-Object
+        [Console]::Error.WriteLine("repo-hygiene found $($sorted.Count) stray artifact(s) in ${repo}:")
+        foreach ($entry in $sorted) {
+            [Console]::Error.WriteLine("  - $entry")
+        }
+    }
+
+    if (-not $any) { exit 0 }
+
     [Console]::Error.WriteLine('')
     [Console]::Error.WriteLine(
         'AGENTS.md Rule 1: the repo must be clean. If you created these, remove them ' +

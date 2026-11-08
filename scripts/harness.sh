@@ -4,9 +4,14 @@
 # macOS/Linux implementation. The Windows counterpart is scripts/harness.ps1;
 # keep the two in step. No Node or Python needed.
 #
-#   ./scripts/harness.sh check-path            validate the configured project
-#   ./scripts/harness.sh check-write <path>    test one write target
-#   ./scripts/harness.sh check-repo            scan for stray artifacts
+#   ./scripts/harness.sh check-path            validate every configured project
+#   ./scripts/harness.sh check-write <path>    test one write against every project
+#   ./scripts/harness.sh check-repo            scan every project for stray files
+#
+# PROJECT_PATH.txt holds one project path per line. The first is the working
+# repo; additional paths are reference/source repos for cross-project work such
+# as porting or re-importing. UNITY_AGENT_PROJECT_PATHS (colon- or semicolon-
+# separated) or UNITY_AGENT_PROJECT_PATH overrides the file.
 #
 # check-write and check-repo exit 0 when clean and 2 on a violation. They fail
 # open when no project path is configured.
@@ -25,13 +30,9 @@ usage() {
   printf 'usage: %s <check-path|check-repo|check-write <path>>\n' "$0" >&2
 }
 
-configured_path() {
-  raw=''
-  if [ -n "${UNITY_AGENT_PROJECT_PATH:-}" ]; then
-    raw=$UNITY_AGENT_PROJECT_PATH
-  elif [ -f "$CONFIG_FILE" ]; then
-    raw=$(sed -n '/^[[:space:]]*#/d; /^[[:space:]]*$/d; p; q' "$CONFIG_FILE")
-  fi
+# Print the normalized form of one configured path, or fail.
+normalize_path() {
+  raw=$1
 
   [ -n "$raw" ] || return 1
 
@@ -69,6 +70,28 @@ configured_path() {
   fi
 }
 
+# Print every configured project path, one per line, in order.
+configured_paths() {
+  entries=''
+
+  if [ -n "${UNITY_AGENT_PROJECT_PATHS:-}" ]; then
+    case "$UNITY_AGENT_PROJECT_PATHS" in
+      *';'*) entries=$(printf '%s' "$UNITY_AGENT_PROJECT_PATHS" | tr ';' '\n') ;;
+      *) entries=$(printf '%s' "$UNITY_AGENT_PROJECT_PATHS" | tr ':' '\n') ;;
+    esac
+  elif [ -n "${UNITY_AGENT_PROJECT_PATH:-}" ]; then
+    entries=$UNITY_AGENT_PROJECT_PATH
+  elif [ -f "$CONFIG_FILE" ]; then
+    entries=$(sed -n '/^[[:space:]]*#/d; /^[[:space:]]*$/d; p' "$CONFIG_FILE")
+  fi
+
+  printf '%s\n' "$entries" | while IFS= read -r entry; do
+    entry=$(printf '%s' "$entry" | tr -d '\r')
+    [ -n "$entry" ] || continue
+    normalize_path "$entry" || true
+  done
+}
+
 blocked() {
   printf 'BLOCKED by repo-guard: "%s" is not permitted inside the game repo.\n' "$1" >&2
   printf '%s\n' 'AGENTS.md Rule 1 - the repo must contain no harness, planning, backup, or AI-related files, and Library/Temp/obj/Logs/UserSettings are off limits.' >&2
@@ -76,82 +99,12 @@ blocked() {
   exit 2
 }
 
-check_path() {
-  repo=$(configured_path) || {
-    printf 'ERROR: No project path configured.\n' >&2
-    printf '  Copy PROJECT_PATH.example.txt to PROJECT_PATH.txt and paste your Unity project path.\n' >&2
-    exit 1
-  }
+# Print suspect paths inside one repo.
+scan_repo() {
+  repo=$1
 
-  printf 'Configured path: %s\n' "$repo"
-
-  if [ ! -d "$repo" ]; then
-    printf 'ERROR: That folder does not exist. Check for typos or a stray character.\n' >&2
-    exit 1
-  fi
-
-  missing=''
-  [ -d "$repo/Assets" ] || missing=" Assets"
-  [ -d "$repo/ProjectSettings" ] || missing="$missing ProjectSettings"
-  if [ -n "$missing" ]; then
-    printf 'ERROR: Missing%s - this is not a Unity project root.\n' "$missing" >&2
-    printf '  You may have pointed at the Assets folder or a parent folder.\n' >&2
-    exit 1
-  fi
-
-  version='unknown'
-  if [ -f "$repo/ProjectSettings/ProjectVersion.txt" ]; then
-    found=$(sed -n 's/.*m_EditorVersion:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$repo/ProjectSettings/ProjectVersion.txt" | head -n 1)
-    [ -n "$found" ] && version=$found
-  fi
-
-  printf 'OK: valid Unity project root (Unity %s).\n' "$version"
-  printf '  Ready - start the agent.\n'
-}
-
-check_write() {
-  target=${1:-}
-  [ -n "$target" ] || exit 0
-
-  repo=$(configured_path) || exit 0
-  [ -d "$repo" ] || exit 0
-  repo=${repo%/}
-
-  case "$target" in
-    /*) file=$target ;;
-    *) file="$PWD/$target" ;;
-  esac
-
-  dir=$(dirname "$file")
-  base=$(basename "$file")
-  if resolved_dir=$(CDPATH= cd "$dir" 2>/dev/null && pwd -P); then
-    file="$resolved_dir/$base"
-  fi
-
-  case "$file" in
-    "$repo"|"$repo"/*) rel=${file#"$repo"}; rel=${rel#/} ;;
-    *) exit 0 ;;
-  esac
-
-  if printf '%s\n' "$base" | grep -Eiq "$BANNED_NAME_RE"; then
-    blocked "$rel"
-  fi
-  if printf '%s\n' "$rel" | grep -Eiq "$BANNED_PATH_RE"; then
-    blocked "$rel"
-  fi
-  if printf '%s\n' "$rel" | grep -Eiq "$BANNED_DIR_RE"; then
-    blocked "$rel"
-  fi
-
-  exit 0
-}
-
-check_repo() {
-  repo=$(configured_path) || exit 0
-  [ -d "$repo" ] || exit 0
-  cd "$repo" || exit 0
-
-  found=$(
+  (
+    CDPATH= cd "$repo" 2>/dev/null || exit 0
     find . \
       \( -type d \( -name Library -o -name Temp -o -name obj -o -name bin \
         -o -name Logs -o -name UserSettings -o -name .git -o -name .vs \
@@ -166,14 +119,125 @@ check_repo() {
         -o -iname '*.plan.md' -o -iname '*_notes.md' -o -iname '*.bak' \
         -o -iname '*.orig' -o -iname '*.old' -o -iname 'scratch.*' \) -print \) \
       2>/dev/null
-  )
+  ) | sed -e '/^$/d' -e 's|^\./||' | head -n 40
+}
 
-  found=$(printf '%s\n' "$found" | sed -e '/^$/d' -e 's|^\./||' | head -n 40)
-  [ -n "$found" ] || exit 0
+check_path() {
+  found_any=0
+  failed=0
 
-  count=$(printf '%s\n' "$found" | wc -l | tr -d ' ')
-  printf 'repo-hygiene found %s stray artifact(s) in the game repo:\n' "$count" >&2
-  printf '%s\n' "$found" | sed 's/^/  - /' >&2
+  old_ifs=$IFS
+  IFS='
+'
+  set -f
+  for repo in $(configured_paths); do
+    found_any=1
+    printf 'Configured path: %s\n' "$repo"
+
+    if [ ! -d "$repo" ]; then
+      printf 'ERROR: That folder does not exist. Check for typos or a stray character.\n' >&2
+      failed=1
+      continue
+    fi
+
+    missing=''
+    [ -d "$repo/Assets" ] || missing=" Assets"
+    [ -d "$repo/ProjectSettings" ] || missing="$missing ProjectSettings"
+    if [ -n "$missing" ]; then
+      printf 'ERROR: Missing%s - this is not a Unity project root.\n' "$missing" >&2
+      printf '  You may have pointed at the Assets folder or a parent folder.\n' >&2
+      failed=1
+      continue
+    fi
+
+    version='unknown'
+    if [ -f "$repo/ProjectSettings/ProjectVersion.txt" ]; then
+      version_file=$(sed -n 's/.*m_EditorVersion:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$repo/ProjectSettings/ProjectVersion.txt" | head -n 1)
+      [ -n "$version_file" ] && version=$version_file
+    fi
+
+    printf 'OK: valid Unity project root (Unity %s).\n' "$version"
+  done
+  set +f
+  IFS=$old_ifs
+
+  if [ "$found_any" -eq 0 ]; then
+    printf 'ERROR: No project path configured.\n' >&2
+    printf '  Copy PROJECT_PATH.example.txt to PROJECT_PATH.txt and paste your Unity project path.\n' >&2
+    exit 1
+  fi
+
+  [ "$failed" -eq 0 ] || exit 1
+  printf '  Ready - start the agent.\n'
+}
+
+check_write() {
+  target=${1:-}
+  [ -n "$target" ] || exit 0
+
+  case "$target" in
+    /*) file=$target ;;
+    *) file="$PWD/$target" ;;
+  esac
+
+  dir=$(dirname "$file")
+  base=$(basename "$file")
+  if resolved_dir=$(CDPATH= cd "$dir" 2>/dev/null && pwd -P); then
+    file="$resolved_dir/$base"
+  fi
+
+  old_ifs=$IFS
+  IFS='
+'
+  set -f
+  for repo in $(configured_paths); do
+    [ -d "$repo" ] || continue
+    repo=${repo%/}
+
+    case "$file" in
+      "$repo"|"$repo"/*) rel=${file#"$repo"}; rel=${rel#/} ;;
+      *) continue ;;
+    esac
+
+    if printf '%s\n' "$base" | grep -Eiq "$BANNED_NAME_RE"; then
+      blocked "$rel"
+    fi
+    if printf '%s\n' "$rel" | grep -Eiq "$BANNED_PATH_RE"; then
+      blocked "$rel"
+    fi
+    if printf '%s\n' "$rel" | grep -Eiq "$BANNED_DIR_RE"; then
+      blocked "$rel"
+    fi
+  done
+  set +f
+  IFS=$old_ifs
+
+  exit 0
+}
+
+check_repo() {
+  any=0
+
+  old_ifs=$IFS
+  IFS='
+'
+  set -f
+  for repo in $(configured_paths); do
+    [ -d "$repo" ] || continue
+
+    output=$(scan_repo "$repo")
+    [ -n "$output" ] || continue
+
+    any=1
+    count=$(printf '%s\n' "$output" | wc -l | tr -d ' ')
+    printf 'repo-hygiene found %s stray artifact(s) in %s:\n' "$count" "$repo" >&2
+    printf '%s\n' "$output" | sed 's/^/  - /' >&2
+  done
+  set +f
+  IFS=$old_ifs
+
+  [ "$any" -eq 0 ] && exit 0
+
   printf '\n' >&2
   printf '%s\n' 'AGENTS.md Rule 1: the repo must be clean. If you created these, remove them and move the content into projects/<slug>/ in the harness. If they predate you and belong to the user, say so explicitly in your report and leave them alone - do not delete the user'"'"'s files.' >&2
   exit 2

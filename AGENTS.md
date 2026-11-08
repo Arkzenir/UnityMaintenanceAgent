@@ -97,7 +97,7 @@ and let the user approve the pair together. Don't discover this mid-apply.
   agents/                        wiring for tools that need more than AGENTS.md
     README.md                    the shared-vs-per-agent rule and the registry
     _template/                   copy to agents/<id>/ for a new tool
-  PROJECT_PATH.txt               local config: the user's Unity project path
+  PROJECT_PATH.txt               local config; one path per line, first is primary
   PROJECT_PATH.example.txt       template for that file
   scripts/                       portable checks (PowerShell + POSIX sh)
     harness.ps1
@@ -124,11 +124,11 @@ the user says otherwise.
 
 **Every session, before anything else:**
 
-1. **Read `PROJECT_PATH.txt`** in the harness root. The user pastes their Unity
-   project path there before starting you, so this is your first action every
-   session — before greeting, before anything. The first non-comment,
-   non-blank line is the path. Tolerate wrapping quotes, trailing slashes, and a
-   leading `~`.
+1. **Read `PROJECT_PATH.txt`** in the harness root. It holds one Unity project
+   path per line; the first is the working repo, and any further lines are
+   reference or source repos for cross-project work. Reading it is your first
+   action every session — before greeting, before anything. Tolerate wrapping
+   quotes, trailing slashes, and a leading `~`.
 
    Handle the failure cases plainly rather than guessing:
    - Still contains `PASTE_YOUR_UNITY_PROJECT_PATH_HERE`, or empty → tell the user
@@ -143,8 +143,16 @@ the user says otherwise.
    - The user names a *different* path in chat → that wins for this session, and
      offer to update `PROJECT_PATH.txt` so it persists.
 
-   `UNITY_AGENT_PROJECT_PATH` overrides the file if set (the launcher scripts set
-   it), so check the environment first if it's present.
+   `UNITY_AGENT_PROJECT_PATHS` (path-separated) overrides the list, and
+   `UNITY_AGENT_PROJECT_PATH` overrides it with a single path; the launchers set
+   one of them.
+
+   When more than one path is configured, validate each one and establish which
+   is the source and which is the target before proposing anything. Each repo
+   has its own `projects/<slug>/`; read the documents for every repo the task
+   touches, and record the change in the working repo's folder. For a port or
+   re-import, the proposal names both repos, lists every file that moves, and
+   says which repo was verified.
 
 2. Confirm read access and that it's a Unity project root: `ls` it and expect
    `Assets/`, `ProjectSettings/`, `Packages/`. Read
@@ -318,13 +326,14 @@ Two platform-native scripts enforce Rule 1 with nothing to install:
 
 The checks are:
 
-- `check-path` — validates `PROJECT_PATH.txt` and prints the Unity version.
+- `check-path` — validates every configured path and prints each Unity version.
 - `check-write <path>` — tests one write target before you write it. Exit 2 blocks.
 - `check-repo` — scans the game repo for stray artifacts. Exit 2 means findings.
 
-Both read the project path from `PROJECT_PATH.txt` or
-`UNITY_AGENT_PROJECT_PATH`, and fail open when neither is configured: no path,
-nothing to check, no block. They never delete anything.
+Both read every path from `PROJECT_PATH.txt` (or the environment overrides) and
+apply to all of them: `check-write` blocks if the target is inside any repo, and
+`check-repo` reports findings per repo. They fail open when no path is
+configured: nothing to check, no block. They never delete anything.
 
 **Run `check-repo` before you finish a turn.** It is the mechanical backstop for
 Rule 1, and the contract alone is not enough. No agent gets automatic hooks —
