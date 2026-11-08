@@ -1,0 +1,62 @@
+{
+  "permissions": {
+    "defaultMode": "plan",
+    "additionalDirectories": [],
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(rg:*)",
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(unity --help)",
+      "Bash(unity --version)",
+      "Bash(unity editors:*)",
+      "Bash(unity doctor:*)",
+      "Bash(dotnet build:*)"
+    ],
+    "ask": [
+      "Bash(dotnet:*)"
+    ],
+    "deny": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(git stash:*)",
+      "Bash(git clean:*)",
+      "Bash(unity pipeline:*)",
+      "Bash(rm -rf:*)",
+      "Bash(sudo:*)",
+      "Read(**/.env)",
+      "Read(**/*.keystore)",
+      "Read(**/*.p12)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/hooks/repo-guard.mjs\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/hooks/repo-hygiene.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

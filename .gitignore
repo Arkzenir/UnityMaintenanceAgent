@@ -1,0 +1,5 @@
+scratch/*
+!scratch/README.md
+logs/*
+!logs/README.md
+.claude/settings.local.json
