@@ -1,0 +1,24 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Copy this file to PROJECT_PATH.txt, then paste your Unity project path
+#  below and save. That's the whole setup.
+#
+#  The path is the folder that contains Assets/ and ProjectSettings/ —
+#  the Unity project root, not the Assets folder and not a parent folder.
+#
+#  Examples:
+#    C:\dev\MyGame
+#    /Users/you/dev/MyGame
+#    ~/dev/MyGame
+#
+#  Quotes, trailing slashes and surrounding spaces are all fine — paste
+#  whatever your file manager gives you. Windows "Copy as path" output works
+#  as-is. Lines starting with # are ignored; the first real line is used.
+#
+#  Optional check before your first session:
+#    Windows:      powershell -NoProfile -ExecutionPolicy Bypass -File scripts\harness.ps1 check-path
+#    macOS/Linux:  ./scripts/harness.sh check-path
+#
+#  PROJECT_PATH.txt is gitignored on purpose: it holds a machine-specific path.
+# ─────────────────────────────────────────────────────────────────────────────
+
+PASTE_YOUR_UNITY_PROJECT_PATH_HERE

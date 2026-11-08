@@ -35,28 +35,5 @@
       "Read(**/*.keystore)",
       "Read(**/*.p12)"
     ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/hooks/repo-guard.mjs\""
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/hooks/repo-hygiene.mjs\""
-          }
-        ]
-      }
-    ]
   }
 }

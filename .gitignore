@@ -3,3 +3,6 @@ scratch/*
 logs/*
 !logs/README.md
 .claude/settings.local.json
+
+# Machine-specific project path. Copy PROJECT_PATH.example.txt to this file.
+/PROJECT_PATH.txt
