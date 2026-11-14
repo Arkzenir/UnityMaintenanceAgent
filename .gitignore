@@ -6,3 +6,7 @@ logs/*
 
 # Machine-specific project path. Copy PROJECT_PATH.example.txt to this file.
 /PROJECT_PATH.txt
+
+# Per-project memory is machine-local and never published.
+projects/*
+!projects/README.md
